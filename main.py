@@ -67,7 +67,6 @@ class StrategyDecision:
     rsi: float = 0.0
     volume_state: str = "unknown"
     volatility_state: str = "unknown"
-    context_hash: str = ""
 
 
 @dataclass
@@ -141,15 +140,17 @@ class KucoinClient:
             return []
         candles: List[Candle] = []
         for row in reversed(data):
-            candles.append(Candle(
-                ts=int(row[0]),
-                open=safe_float(row[1]),
-                close=safe_float(row[2]),
-                high=safe_float(row[3]),
-                low=safe_float(row[4]),
-                volume=safe_float(row[5]),
-                turnover=safe_float(row[6]) if len(row) > 6 else 0.0,
-            ))
+            candles.append(
+                Candle(
+                    ts=int(row[0]),
+                    open=safe_float(row[1]),
+                    close=safe_float(row[2]),
+                    high=safe_float(row[3]),
+                    low=safe_float(row[4]),
+                    volume=safe_float(row[5]),
+                    turnover=safe_float(row[6]) if len(row) > 6 else 0.0,
+                )
+            )
         return candles
 
 
@@ -436,19 +437,16 @@ def escape_html(text: str) -> str:
 
 def build_message(symbol: str, decision: StrategyDecision, state: str) -> str:
     label = "PREALERTA" if state == "prealert" else "CONFIRMADA" if state == "confirmed" else state.upper()
-    return (
-        f"<b>{escape_html(symbol)}</b> | <b>{label}</b> | <b>{escape_html(decision.mode)}</b>
-"
-        f"Motivo: {escape_html(decision.reason)}
-"
-        f"Precio: {decision.price:.2f}
-"
-        f"RSI: {decision.rsi:.2f}
-"
-        f"Volumen: {escape_html(decision.volume_state)}
-"
-        f"Volatilidad: {escape_html(decision.volatility_state)}"
-    )
+    lines = [
+        f"<b>{escape_html(symbol)}</b> | <b>{label}</b> | <b>{escape_html(decision.mode)}</b>",
+        f"Motivo: {escape_html(decision.reason)}",
+        f"Precio: {decision.price:.2f}",
+        f"RSI: {decision.rsi:.2f}",
+        f"Volumen: {escape_html(decision.volume_state)}",
+        f"Volatilidad: {escape_html(decision.volatility_state)}",
+    ]
+    return "
+".join(lines)
 
 
 class ProSignalApp:
@@ -462,17 +460,6 @@ class ProSignalApp:
         self.notifier = TelegramNotifier(cfg.telegram_bot_token, cfg.telegram_chat_id, cfg.telegram_parse_mode, cfg.telegram_silent)
         self.last_processed_candle_ts = 0
 
-    def health_check(self) -> Dict[str, Any]:
-        status = {"kucoin": False, "telegram": False, "candles": 0}
-        try:
-            candles = self.exchange.get_candles(self.cfg.symbol, self.cfg.timeframe, 5)
-            status["kucoin"] = bool(candles)
-            status["candles"] = len(candles)
-        except Exception:
-            status["kucoin"] = False
-        status["telegram"] = bool(self.cfg.telegram_bot_token and self.cfg.telegram_chat_id)
-        return status
-
     def run_once(self):
         try:
             candles = self.exchange.get_candles(self.cfg.symbol, self.cfg.timeframe, self.cfg.candles_limit)
@@ -484,7 +471,6 @@ class ProSignalApp:
                 return
 
             decision = self.strategy.evaluate(candles, self.cfg.mode, self.cfg)
-            decision.context_hash = market_context_hash(candles, decision)
             managed = self.manager.evaluate(decision, candles)
             self.last_processed_candle_ts = candles[-1].ts
 
@@ -514,6 +500,7 @@ def self_test() -> bool:
     cfg = load_config_from_env()
     assert cfg.symbol == "BTC-USDT"
     assert seconds_for_timeframe("15min") == 900
+
     dummy_candles = [
         Candle(1, 100, 101, 102, 99, 10, 1000),
         Candle(2, 101, 103, 104, 100, 12, 1200),
@@ -537,9 +524,11 @@ def self_test() -> bool:
         Candle(20, 131, 133, 134, 130, 160, 16000),
         Candle(21, 133, 135, 136, 132, 170, 17000),
     ]
+
     strat = StrategyEngine()
     dec = strat.evaluate(dummy_candles, "normal", cfg)
     assert dec.direction in {"LONG", "SHORT", "NONE", "PREALERT"}
+
     store_path = "_test_state.json"
     try:
         store = StateStore(store_path)
@@ -561,4 +550,3 @@ if __name__ == "__main__":
         app.run_forever()
     else:
         app.run_once()
-
